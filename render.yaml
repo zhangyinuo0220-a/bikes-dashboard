@@ -1,0 +1,12 @@
+# Render Blueprint - https://render.com/docs/blueprint-spec
+# Deploy: New + > Blueprint > connect this repo, or create a Web Service by hand
+# with the same build and start commands. No API key or secret is needed.
+services:
+  - type: web
+    name: bikes-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install uv && uv sync
+    startCommand: uv run gunicorn app:server
+    healthCheckPath: /
+    autoDeploy: true

@@ -1,0 +1,16 @@
+[project]
+name = "bikes-dashboard"
+version = "0.1.0"
+description = "TfL London bikes: explore the data and predict daily hires from Open-Meteo weather (Dash)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "dash>=3.0",
+    "plotly>=5.24",
+    "pandas>=2.2",
+    "requests>=2.32",
+    "gunicorn>=23.0",
+]
+
+[tool.uv]
+package = false
