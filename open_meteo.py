@@ -22,12 +22,19 @@ the first week of January 2026) use open_meteo_history, which reads Open-Meteo's
 historical archive.
 """
 
+import logging
+import os
+
 import requests
 import pandas as pd
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+JAN_2026_FALLBACK = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "january_2026_weather.csv"
+)
+log = logging.getLogger(__name__)
 
 # Forecast API daily field  ->  the column name our model uses
 DAILY_FIELDS = {
@@ -103,6 +110,23 @@ def open_meteo(location="London", days_to_forecast=5):
     return df
 
 
+def _bundled_january_2026(location, start_date, end_date):
+    """Return the fixed London January 2026 snapshot when it matches the request."""
+    if (
+        str(location).strip().lower() != "london"
+        or str(start_date) != "2026-01-01"
+        or str(end_date) != "2026-01-07"
+        or not os.path.exists(JAN_2026_FALLBACK)
+    ):
+        return None
+
+    df = pd.read_csv(JAN_2026_FALLBACK, parse_dates=["date"])
+    df.insert(1, "day_of_week", df["date"].dt.strftime("%a"))
+    df.attrs["location"] = "London, United Kingdom"
+    df.attrs["source"] = "bundled Open-Meteo snapshot"
+    return df
+
+
 def open_meteo_history(location, start_date, end_date):
     """Return daily weather for a past date range from Open-Meteo's archive.
 
@@ -119,36 +143,44 @@ def open_meteo_history(location, start_date, end_date):
         pandas.DataFrame with the same columns as open_meteo(): date,
         day_of_week, temp, humidity, precip, windspeed, cloudcover.
     """
-    lat, lon, label = geocode(location)
+    try:
+        lat, lon, label = geocode(location)
 
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "start_date": start_date,
-        "end_date": end_date,
-        "hourly": ",".join(HOURLY_FIELDS),
-        "timezone": "auto",
-        "wind_speed_unit": "kmh",   # matches the training data units
-    }
-    resp = requests.get(ARCHIVE_URL, params=params, timeout=30)
-    resp.raise_for_status()
-    hourly = resp.json()["hourly"]
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "start_date": start_date,
+            "end_date": end_date,
+            "hourly": ",".join(HOURLY_FIELDS),
+            "timezone": "auto",
+            "wind_speed_unit": "kmh",   # matches the training data units
+        }
+        resp = requests.get(ARCHIVE_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        hourly = resp.json()["hourly"]
 
-    hf = pd.DataFrame({col: hourly[field] for field, col in HOURLY_FIELDS.items()})
-    hf["date"] = pd.to_datetime(hourly["time"]).normalize()
+        hf = pd.DataFrame({col: hourly[field] for field, col in HOURLY_FIELDS.items()})
+        hf["date"] = pd.to_datetime(hourly["time"]).normalize()
 
-    # Aggregate hours to days: mean for levels, sum for precipitation
-    daily = hf.groupby("date").agg(
-        temp=("temp", "mean"),
-        humidity=("humidity", "mean"),
-        precip=("precip", "sum"),
-        windspeed=("windspeed", "mean"),
-        cloudcover=("cloudcover", "mean"),
-    ).reset_index()
+        # Aggregate hours to days: mean for levels, sum for precipitation
+        daily = hf.groupby("date").agg(
+            temp=("temp", "mean"),
+            humidity=("humidity", "mean"),
+            precip=("precip", "sum"),
+            windspeed=("windspeed", "mean"),
+            cloudcover=("cloudcover", "mean"),
+        ).reset_index()
 
-    daily.insert(1, "day_of_week", daily["date"].dt.strftime("%a"))
-    daily.attrs["location"] = label
-    return daily
+        daily.insert(1, "day_of_week", daily["date"].dt.strftime("%a"))
+        daily.attrs["location"] = label
+        daily.attrs["source"] = "Open-Meteo archive API"
+        return daily
+    except requests.RequestException:
+        fallback = _bundled_january_2026(location, start_date, end_date)
+        if fallback is None:
+            raise
+        log.warning("Open-Meteo archive request failed; using bundled January 2026 snapshot.")
+        return fallback
 
 
 if __name__ == "__main__":
